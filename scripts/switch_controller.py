@@ -170,7 +170,14 @@ class UserInterface(object):
         self.size_str = 0
 
     def info(self):
-        
+        print("This program controls Graspit! using an assistive controller with a 3.5mm jack input")
+        print(bcolors.OKBLUE + "Blue color designates that the output is going to send a NEXT signal" + bcolors.ENDC)
+        print(bcolors.WARNING + "Yellow color designates that the output is going to send a SELECT signal" + bcolors.ENDC)
+        print(bcolors.HEADER + "Purple color designates that the output is waiting for user input" + bcolors.ENDC)
+        print(bcolors.OKGREEN + "Green color designates that a signal was sent" + bcolors.ENDC)
+        print("Hold the switch for %0.2f to %0.2f second(s) if you want to send a NEXT signal" % (Communicator.WAIT_THRESHOLD, Communicator.NEXT_THRESHOLD))
+        print("Hold the switch for %0.2f to %0.2f second(s) if you want to send a SELECT signal" % (Communicator.NEXT_THRESHOLD, Communicator.SELECT_THRESHOLD))
+        print()
 
     def registeringNext(self, amplitude, time):
         self.print_output((bcolors.OKBLUE + "Registering next (%fs passed, %f amplitude)" + bcolors.ENDC) % (time, amplitude))
