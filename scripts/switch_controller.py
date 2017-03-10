@@ -12,6 +12,9 @@ import sys
 import socket
 
 #http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
+
+from enum import Enum
+
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -21,6 +24,16 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+
+class Tap(Enum):
+    PRESS = 1
+    RELEASE = 2
+    COOLINGDOWN = 3
+    NOTHING = 4
+
+class Msg(Enum):
+    NEXT_MSG = "2\n"
+    SELECT_MSG = "3\n"
 
 class TapDetector(object):
     TAP_THRESHOLD = 0.6
@@ -32,24 +45,13 @@ class TapDetector(object):
     CHANNELS = 2
     MAX_TAP_BLOCKS = 0.15/INPUT_BLOCK_TIME
 
-    def __init__(self, communicator):
+    def __init__(self):
         self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
-        self.errorcount = 0
-        self.communicator = communicator
         self.hasCooledDown = True
 
     def stop(self):
         self.stream.close()
-
-    def tapDetected(self, amplitude):
-        if self.hasCooledDown:
-            self.communicator.tapDetected(amplitude)
-        self.hasCooledDown = False
-        
-    def noTapDetected(self, amplitude):
-        self.hasCooledDown = True
-        self.communicator.noTapDetected(amplitude)
 
     def open_mic_stream( self ):
         stream = self.pa.open(   format = self.FORMAT,
@@ -64,24 +66,24 @@ class TapDetector(object):
         try:
             block = self.stream.read(self.INPUT_FRAMES_PER_BLOCK)
         except IOError, e:
-            self.errorcount += 1
-            print( "(%d) Error recording: %s" % (self.errorcount,e) )
-            return
+            return Tap.NOTHING
 
         amplitude = self.get_rms( block )
-        if amplitude > self.TAP_THRESHOLD:
-            self.tapDetected(amplitude)
-        else:
-            self.noTapDetected(amplitude)
 
-        return block
+        result = Tap.PRESS if amplitude > self.TAP_THRESHOLD else \
+                 Tap.RELEASE if amplitude < -self.TAP_THRESHOLD else \
+                 Tap.NOTHING
+
+        if result is Tap.NOTHING:
+            self.hasCooledDown = True
+            return result
+        elif self.hasCooledDown:
+            self.hasCooledDown = False
+            return result
+        else:
+            return Tap.COOLINGDOWN
 
     def get_rms( self, block ):
-        # RMS amplitude is defined as the square root of the 
-        # mean over time of the square of the amplitude.
-        # so we need to convert this string of bytes into 
-        # a string of 16-bit samples...
-
         # we will get one short out for each 
         # two chars in the string.
         count = len(block)/2
@@ -94,9 +96,9 @@ class TapDetector(object):
             # sample is a signed short in +/- 32768. 
             # normalize it to 1.0
             n = sample * self.SHORT_NORMALIZE
-            sum_squares += n * n
+            sum_squares += n
 
-        return math.sqrt( sum_squares / count )
+        return sum_squares / count
         # return sum_squares/count
 
 class Communicator(object):
@@ -104,23 +106,31 @@ class Communicator(object):
     NEXT_THRESHOLD = 1
     SELECT_THRESHOLD = 3
 
-    NEXT_MSG = "2\n"
-    SELECT_MSG = "3\n"
-
-    def __init__(self, ui):
+    def __init__(self):
         self.last_tap = time.time() - 100
         self.current_time = time.time()
 
-        self.client_socket = self.init_client_socket()
-
-        self.ui = ui
+        self.init_client_socket()
 
     def init_client_socket(self, ip='localhost', port=4775):
-        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.client_socket.connect((ip, port))
-        return self.client_socket
+        try:
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.connect((ip, port))
+            return True
+        except socket.timeout:
+            print("Could not connect to server")
+            return False
 
-    def tapDetected(self, amplitude):
+    def handleInput(self, tap):
+        if tap is Tap.PRESS:
+            self.initiate_command()
+        elif tap is Tap.RELEASE:
+            self.execute_command()
+        elif tap is Tap.COOLINGDOWN or tap is Tap.NOTHING:
+            self.update
+
+
+    def tapDetected(self):
         current_tap = time.time()
         time_since_last_tap = current_tap - self.last_tap
         if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
@@ -132,30 +142,37 @@ class Communicator(object):
         else: #Took too long on tap
             self.initialTap()
 
-    def noTapDetected(self, amplitude):
+    def noTapDetected(self):
         current_tap = time.time()
         time_since_last_tap = current_tap - self.last_tap
         if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
-            self.ui.bufferPeriod(amplitude, time_since_last_tap)
+            self.ui.bufferPeriod(time_since_last_tap)
         elif self.WAIT_THRESHOLD < time_since_last_tap <= self.NEXT_THRESHOLD:
-            self.ui.registeringNext(amplitude, time_since_last_tap)
+            self.ui.registeringNext(time_since_last_tap)
         elif self.NEXT_THRESHOLD < time_since_last_tap <= self.SELECT_THRESHOLD:
-            self.ui.registeringSelect(amplitude, time_since_last_tap)
+            self.ui.registeringSelect(time_since_last_tap)
         else: #Waiting for tap
-            self.ui.waitingForInput(amplitude, time_since_last_tap)
+            self.ui.waitingForInput(time_since_last_tap)
+
+    def submitMessage(self, msg):
+        try:
+            self.client_socket.send(msg)
+        except socket.timeout:
+            connected = self.init_client_socket()
+            if connected:
+                self.client_socket.send(msg)
+            else:
+                print("Failed to send msg: %s" % msg)
 
     def submitNext(self):
-        self.ui.submittingNext()
         self.resetLastTap()
-        self.client_socket.send(self.NEXT_MSG)
+        self.submitMessage(Msg.NEXT_MSG)
 
     def submitSelect(self):
-        self.ui.submittingSelect()
         self.resetLastTap()
-        self.client_socket.send(self.SELECT_MSG)
+        self.submitMessage(Msg.SELECT_MSG)
 
     def initialTap(self):
-        self.ui.initialTap()
         self.updateLastTap()
 
     def updateLastTap(self):
@@ -213,10 +230,65 @@ class UserInterface(object):
 if __name__ == "__main__":
     ui = UserInterface()
     ui.info()
-    communicator = Communicator(ui)
-    tt = TapDetector(communicator)
+    communicator = Communicator()
+    tt = TapDetector()
 
     while True:
         block = tt.listen()
         # DO NOT SLEEP
         # The length of time required to record a block is enough of a wait
+
+
+#http://stackoverflow.com/questions/21667713/tkinter-background-while-loop
+# import Tkinter as tk
+# import Queue as queue
+#
+# class Example(tk.Frame):
+#     def __init__(self, parent):
+#         tk.Frame.__init__(self, parent)
+#
+#         self.queue = queue.Queue()
+#
+#         buttonFrame = tk.Frame(self)
+#         for i in range(10):
+#             b = tk.Button(buttonFrame, text=str(i),
+#                           command=lambda button=i: self.press(button))
+#             b.pack(side="top", fill="x")
+#         self.lb = tk.Listbox(self, width=60, height=20)
+#         self.vsb = tk.Scrollbar(self, command=self.lb.yview)
+#         self.lb.configure(yscrollcommand=self.vsb.set)
+#
+#         buttonFrame.pack(side="left", fill="y")
+#         self.vsb.pack(side="right", fill="y")
+#         self.lb.pack(side="left", fill="both", expand=True)
+#
+#         self.manage_queue()
+#
+#     def press(self, i):
+#         '''Add a button to the queue'''
+#         item = "Button %s" % i
+#         self.queue.put(item)
+#         self.log("push", item)
+#
+#     def log(self, action, item):
+#         '''Display an action in the listbox'''
+#         message = "pushed to queue" if action == "push" else "popped from queue"
+#         message += " '%s' (queue size %s)" % (item, self.queue.qsize())
+#         self.lb.insert("end", message)
+#         self.lb.see("end")
+#
+#     def manage_queue(self):
+#         '''pull an item off the queue and act on it'''
+#         try:
+#             item = self.queue.get_nowait()
+#             self.log("pop", item)
+#         except queue.Empty:
+#             pass
+#
+#         # repeat again in 1 second
+#         self.after(1000, self.manage_queue)
+#
+# if __name__ == "__main__":
+#     root = tk.Tk()
+#     Example(root).pack(fill="both", expand=True)
+#     root.mainloop()
