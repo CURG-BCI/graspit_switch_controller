@@ -4,7 +4,7 @@
 #Obtained most source from http://stackoverflow.com/questions/4160175/detect-tap-with-pyaudio-from-live-mic
 from __future__ import print_function
 
-# import pyaudio
+import pyaudio
 import struct
 import math
 import time
@@ -38,7 +38,7 @@ class Msg:
 
 class TapDetector(object):
     TAP_THRESHOLD = 0.6
-    # FORMAT = pyaudio.paInt16 
+    FORMAT = pyaudio.paInt16 
     SHORT_NORMALIZE = (1.0/32768.0)
     RATE = 8000  
     INPUT_BLOCK_TIME = 0.05
@@ -47,7 +47,7 @@ class TapDetector(object):
     MAX_TAP_BLOCKS = 0.15/INPUT_BLOCK_TIME
 
     def __init__(self):
-        # self.pa = pyaudio.PyAudio()
+        self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
         self.hasCooledDown = True
 
@@ -231,7 +231,9 @@ class UserInterfaceFrame(tk.Frame):
             self.print_output(self.SUBMITTING_SELECT_MSG)
 
     def manage_queue(self):
-        state, t = communicator.readState()
+        result = self.listener.listen()
+        self.communicator.handleInput(result)
+        state, t = self.communicator.readState()
 
         if state is Msg.NEXT_MSG:
             self.current_status_label.config(text="Going to send NEXT")
@@ -252,69 +254,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     UserInterfaceFrame(root, communicator, None).pack(fill="both", expand=True)
     root.mainloop()
-
-# if __name__ == "__main__":
-#     ui = UserInterface()
-#     ui.info()
-#     communicator = Communicator()
-#     tt = TapDetector()
-
-#     while True:
-#         block = tt.listen()
-        # DO NOT SLEEP
-        # The length of time required to record a block is enough of a wait
-
-
-#http://stackoverflow.com/questions/21667713/tkinter-background-while-loop
-# import Tkinter as tk
-# import Queue as queue
-#
-# class Example(tk.Frame):
-#     def __init__(self, parent):
-#         tk.Frame.__init__(self, parent)
-#
-#         self.queue = queue.Queue()
-#
-#         buttonFrame = tk.Frame(self)
-#         for i in range(10):
-#             b = tk.Button(buttonFrame, text=str(i),
-#                           command=lambda button=i: self.press(button))
-#             b.pack(side="top", fill="x")
-#         self.lb = tk.Listbox(self, width=60, height=20)
-#         self.vsb = tk.Scrollbar(self, command=self.lb.yview)
-#         self.lb.configure(yscrollcommand=self.vsb.set)
-#
-#         buttonFrame.pack(side="left", fill="y")
-#         self.vsb.pack(side="right", fill="y")
-#         self.lb.pack(side="left", fill="both", expand=True)
-#
-#         self.manage_queue()
-#
-#     def press(self, i):
-#         '''Add a button to the queue'''
-#         item = "Button %s" % i
-#         self.queue.put(item)
-#         self.log("push", item)
-#
-#     def log(self, action, item):
-#         '''Display an action in the listbox'''
-#         message = "pushed to queue" if action == "push" else "popped from queue"
-#         message += " '%s' (queue size %s)" % (item, self.queue.qsize())
-#         self.lb.insert("end", message)
-#         self.lb.see("end")
-#
-#     def manage_queue(self):
-#         '''pull an item off the queue and act on it'''
-#         try:
-#             item = self.queue.get_nowait()
-#             self.log("pop", item)
-#         except queue.Empty:
-#             pass
-#
-#         # repeat again in 1 second
-#         self.after(1000, self.manage_queue)
-#
-# if __name__ == "__main__":
-#     root = tk.Tk()
-#     Example(root).pack(fill="both", expand=True)
-#     root.mainloop()
