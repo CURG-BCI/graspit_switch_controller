@@ -4,16 +4,16 @@
 #Obtained most source from http://stackoverflow.com/questions/4160175/detect-tap-with-pyaudio-from-live-mic
 from __future__ import print_function
 
-import pyaudio
+# import pyaudio
 import struct
 import math
 import time
 import sys
 import socket
 
-#http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
+import tkinter as tk
 
-from enum import Enum
+#http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
 
 class bcolors:
     HEADER = '\033[95m'
@@ -25,19 +25,20 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-class Tap(Enum):
+class Tap:
     PRESS = 1
     RELEASE = 2
     COOLINGDOWN = 3
     NOTHING = 4
 
-class Msg(Enum):
+class Msg:
     NEXT_MSG = "2\n"
     SELECT_MSG = "3\n"
+    WAITING_FOR_MSG = "4\n"
 
 class TapDetector(object):
     TAP_THRESHOLD = 0.6
-    FORMAT = pyaudio.paInt16 
+    # FORMAT = pyaudio.paInt16 
     SHORT_NORMALIZE = (1.0/32768.0)
     RATE = 8000  
     INPUT_BLOCK_TIME = 0.05
@@ -46,7 +47,7 @@ class TapDetector(object):
     MAX_TAP_BLOCKS = 0.15/INPUT_BLOCK_TIME
 
     def __init__(self):
-        self.pa = pyaudio.PyAudio()
+        # self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
         self.hasCooledDown = True
 
@@ -65,7 +66,7 @@ class TapDetector(object):
     def listen(self):
         try:
             block = self.stream.read(self.INPUT_FRAMES_PER_BLOCK)
-        except IOError, e:
+        except(IOError, e):
             return Tap.NOTHING
 
         amplitude = self.get_rms( block )
@@ -117,74 +118,91 @@ class Communicator(object):
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_socket.connect((ip, port))
             return True
-        except socket.timeout:
+        except(socket.timeout, IOError):
             print("Could not connect to server")
             return False
 
     def handleInput(self, tap):
         if tap is Tap.PRESS:
-            self.initiate_command()
+            self.initiateCommand()
         elif tap is Tap.RELEASE:
-            self.execute_command()
+            self.executeCommand()
         elif tap is Tap.COOLINGDOWN or tap is Tap.NOTHING:
-            self.update
+            self.updateTime()
 
+    def updateTime(self):
+        self.current_time = time.time()
 
-    def tapDetected(self):
-        current_tap = time.time()
-        time_since_last_tap = current_tap - self.last_tap
+    def initiateCommand(self):
+        self.last_tap = time.time()
+        self.updateTime()
+
+    def executeCommand(self):
+        state, x = self.readState()
+        if state is not Msg.WAITING_FOR_MSG:
+            self.submitMessage(state)
+        return state
+
+    def readState(self):
+        self.updateTime()
+        time_since_last_tap = self.current_time - self.last_tap
+        # print(time_since_last_tap)
         if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
-            self.initialTap()
+            msg = Msg.WAITING_FOR_MSG
         elif self.WAIT_THRESHOLD < time_since_last_tap <= self.NEXT_THRESHOLD:
-            self.submitNext()
+            msg = Msg.NEXT_MSG
         elif self.NEXT_THRESHOLD < time_since_last_tap <= self.SELECT_THRESHOLD:
-            self.submitSelect()
+            msg = Msg.SELECT_MSG
         else: #Took too long on tap
-            self.initialTap()
-
-    def noTapDetected(self):
-        current_tap = time.time()
-        time_since_last_tap = current_tap - self.last_tap
-        if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
-            self.ui.bufferPeriod(time_since_last_tap)
-        elif self.WAIT_THRESHOLD < time_since_last_tap <= self.NEXT_THRESHOLD:
-            self.ui.registeringNext(time_since_last_tap)
-        elif self.NEXT_THRESHOLD < time_since_last_tap <= self.SELECT_THRESHOLD:
-            self.ui.registeringSelect(time_since_last_tap)
-        else: #Waiting for tap
-            self.ui.waitingForInput(time_since_last_tap)
+            msg = Msg.WAITING_FOR_MSG
+        return msg, time_since_last_tap
 
     def submitMessage(self, msg):
+        self.resetLastTap()
         try:
-            self.client_socket.send(msg)
-        except socket.timeout:
+            self.client_socket.send(msg.encode())
+        except:
             connected = self.init_client_socket()
             if connected:
                 self.client_socket.send(msg)
             else:
                 print("Failed to send msg: %s" % msg)
 
-    def submitNext(self):
-        self.resetLastTap()
-        self.submitMessage(Msg.NEXT_MSG)
-
-    def submitSelect(self):
-        self.resetLastTap()
-        self.submitMessage(Msg.SELECT_MSG)
-
-    def initialTap(self):
-        self.updateLastTap()
-
-    def updateLastTap(self):
-        self.last_tap = time.time()
-
     def resetLastTap(self):
         self.last_tap = time.time() - self.SELECT_THRESHOLD
 
+class UserInterfaceFrame(tk.Frame):
+    BUFFER_MSG = "Buffering input (%fs passed)"
+    WAITING_FOR_INPUT_MSG = (bcolors.HEADER + "Waiting for input (%fs passed)" + bcolors.ENDC)
+    REGISTERING_SELECT_MSG = (bcolors.WARNING + "Registering select (%fs passed)" + bcolors.ENDC)
+    REGISTERING_NEXT_MSG = (bcolors.OKBLUE + "Registering next (%fs passed)" + bcolors.ENDC)
+    SUBMITTING_SELECT_MSG = bcolors.OKGREEN + "\nSubmitting select" + bcolors.ENDC
+    SUBMITTING_NEXT_MSG = bcolors.OKGREEN + "\nSubmitting next" + bcolors.ENDC
+    INITIAL_TAP_MSG = bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC
 
-class UserInterface(object):
-    def __init__(self):
+    def __init__(self, parent, communicator, listener):
+        tk.Frame.__init__(self, parent)
+
+        self.communicator = communicator
+        self.listener = listener
         self.size_str = 0
+
+        buttonFrame = tk.Frame(self)
+
+        pressButton = tk.Button(buttonFrame, text="Press Switch", command=self.pressSwitch, font=36)
+        releaseButton = tk.Button(buttonFrame, text="Release Switch", command=self.releaseSwitch, font=36)
+
+        pressButton.pack(side="top", fill="x")
+        releaseButton.pack(side="top", fill="x")
+
+        buttonFrame.pack(side="left", fill="y")
+
+        self.current_status_label = tk.Label(self, text='Waiting for User Input', font=36)
+        self.current_status_label.pack(side="left", fill="both")
+
+        self.info()
+
+        self.manage_queue()
 
     def info(self):
         print("This program controls Graspit! using an assistive controller with a 3.5mm jack input")
@@ -196,45 +214,53 @@ class UserInterface(object):
         print("Hold the switch for %0.2f to %0.2f second(s) if you want to send a SELECT signal" % (Communicator.NEXT_THRESHOLD, Communicator.SELECT_THRESHOLD))
         print()
 
-    def registeringNext(self, amplitude, time):
-        self.print_output((bcolors.OKBLUE + "Registering next (%fs passed, %f amplitude)" + bcolors.ENDC) % (time, amplitude))
-
-    def registeringSelect(self, amplitude, time):
-        self.print_output((bcolors.WARNING + "Registering select (%fs passed, %f amplitude)" + bcolors.ENDC) % (time, amplitude))
-
-    def waitingForInput(self, amplitude, time):
-        self.print_output((bcolors.HEADER + "Waiting for input (%fs passed, %f amplitude)" + bcolors.ENDC) % (time, amplitude))
-
-    def bufferPeriod(self, amplitude, time):
-        self.print_output("Buffering input (%fs passed, %f amplitude)" % (time, amplitude))
-
     def print_output(self, msg):
         output = "%s%s" % (msg, " " * (self.size_str - len(msg)))
         self.size_str = len(output)
         print(output, end='\r')
         sys.stdout.flush()
 
-    def submittingNext(self):
-        print(bcolors.OKGREEN + "\nSubmitting next" + bcolors.ENDC)
-        self.size_str = 0
+    def pressSwitch(self):
+        communicator.handleInput(Tap.PRESS)
 
-    def submittingSelect(self):
-        print(bcolors.OKGREEN + "\nSubmitting select" + bcolors.ENDC)
-        self.size_str = 0
+    def releaseSwitch(self):
+        val = communicator.handleInput(Tap.RELEASE)
+        if val is Msg.NEXT_MSG:
+            self.print_output(self.SUBMITTING_NEXT_MSG)
+        elif val is Msg.SELECT_MSG:
+            self.print_output(self.SUBMITTING_SELECT_MSG)
 
-    def initialTap(self):
-        print(bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC)
-        self.size_str = 0
+    def manage_queue(self):
+        state, t = communicator.readState()
 
+        if state is Msg.NEXT_MSG:
+            self.current_status_label.config(text="Going to send NEXT")
+            self.print_output(self.REGISTERING_NEXT_MSG % t)
+        elif state is Msg.SELECT_MSG:
+            self.current_status_label.config(text="Going to send SELECT")
+            self.print_output(self.REGISTERING_SELECT_MSG % t)
+        else:
+            self.current_status_label.config(text="Waiting for user input")
+            self.print_output(self.WAITING_FOR_INPUT_MSG % t)
+
+        # repeat again in 1 millisecond
+        self.after(1, self.manage_queue)
 
 if __name__ == "__main__":
-    ui = UserInterface()
-    ui.info()
     communicator = Communicator()
-    tt = TapDetector()
+    # listener = TapDetector()
+    root = tk.Tk()
+    UserInterfaceFrame(root, communicator, None).pack(fill="both", expand=True)
+    root.mainloop()
 
-    while True:
-        block = tt.listen()
+# if __name__ == "__main__":
+#     ui = UserInterface()
+#     ui.info()
+#     communicator = Communicator()
+#     tt = TapDetector()
+
+#     while True:
+#         block = tt.listen()
         # DO NOT SLEEP
         # The length of time required to record a block is enough of a wait
 
