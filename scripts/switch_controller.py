@@ -37,11 +37,11 @@ class Msg:
     WAITING_FOR_MSG = "4\n"
 
 class TapDetector(object):
-    TAP_THRESHOLD = 0.55
+    TAP_THRESHOLD = 0.7
     FORMAT = pyaudio.paInt16 
     SHORT_NORMALIZE = (1.0/32768.0)
-    RATE = 8000  
-    INPUT_BLOCK_TIME = 0.05
+    RATE = 16000  
+    INPUT_BLOCK_TIME = 0.01
     INPUT_FRAMES_PER_BLOCK = int(RATE*INPUT_BLOCK_TIME)             
     CHANNELS = 2
     MAX_TAP_BLOCKS = 0.15/INPUT_BLOCK_TIME
@@ -49,7 +49,6 @@ class TapDetector(object):
     def __init__(self):
         self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
-        self.hasCooledDown = True
 
     def stop(self):
         self.stream.close()
@@ -75,14 +74,7 @@ class TapDetector(object):
                  Tap.PRESS if amplitude < -self.TAP_THRESHOLD else \
                  Tap.NOTHING
 
-        if result is Tap.NOTHING:
-            self.hasCooledDown = True
-            return result
-        elif self.hasCooledDown:
-            self.hasCooledDown = False
-            return result
-        else:
-            return Tap.COOLINGDOWN
+        return result, amplitude
 
     def get_rms( self, block ):
         # we will get one short out for each 
@@ -153,9 +145,9 @@ class Communicator(object):
         self.updateTime()
         time_since_last_tap = self.current_time - self.last_tap
         # print(time_since_last_tap)
-        if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
-            msg = Msg.WAITING_FOR_MSG
-        elif self.WAIT_THRESHOLD < time_since_last_tap <= self.NEXT_THRESHOLD:
+        # if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
+        #     msg = Msg.WAITING_FOR_MSG
+        if 0 <= time_since_last_tap <= self.NEXT_THRESHOLD:
             msg = Msg.NEXT_MSG
         elif self.NEXT_THRESHOLD < time_since_last_tap <= self.SELECT_THRESHOLD:
             msg = Msg.SELECT_MSG
@@ -179,9 +171,9 @@ class Communicator(object):
 
 class UserInterfaceFrame(tk.Frame):
     BUFFER_MSG = "Buffering input (%fs passed)"
-    WAITING_FOR_INPUT_MSG = (bcolors.HEADER + "Waiting for input (%fs passed)" + bcolors.ENDC)
-    REGISTERING_SELECT_MSG = (bcolors.WARNING + "Registering select (%fs passed)" + bcolors.ENDC)
-    REGISTERING_NEXT_MSG = (bcolors.OKBLUE + "Registering next (%fs passed)" + bcolors.ENDC)
+    WAITING_FOR_INPUT_MSG = (bcolors.HEADER + "Waiting for input (%fs passed, %f amplitude)" + bcolors.ENDC)
+    REGISTERING_SELECT_MSG = (bcolors.WARNING + "Registering select (%fs passed, %f amplitude)" + bcolors.ENDC)
+    REGISTERING_NEXT_MSG = (bcolors.OKBLUE + "Registering next (%fs passed, %f amplitude)" + bcolors.ENDC)
     SUBMITTING_SELECT_MSG = bcolors.OKGREEN + "\nSubmitting select" + bcolors.ENDC
     SUBMITTING_NEXT_MSG = bcolors.OKGREEN + "\nSubmitting next" + bcolors.ENDC
     INITIAL_TAP_MSG = bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC
@@ -237,19 +229,19 @@ class UserInterfaceFrame(tk.Frame):
             self.print_output(self.SUBMITTING_SELECT_MSG)
 
     def manage_queue(self):
-        result = self.listener.listen()
+        result, amplitude = self.listener.listen()
         self.communicator.handleInput(result)
         state, t = self.communicator.readState()
 
         if state is Msg.NEXT_MSG:
             self.current_status_label.config(text="Going to send NEXT")
-            self.print_output(self.REGISTERING_NEXT_MSG % t)
+            self.print_output(self.REGISTERING_NEXT_MSG % (t, amplitude))
         elif state is Msg.SELECT_MSG:
             self.current_status_label.config(text="Going to send SELECT")
-            self.print_output(self.REGISTERING_SELECT_MSG % t)
+            self.print_output(self.REGISTERING_SELECT_MSG % (t, amplitude))
         else:
             self.current_status_label.config(text="Waiting for user input")
-            self.print_output(self.WAITING_FOR_INPUT_MSG % t)
+            self.print_output(self.WAITING_FOR_INPUT_MSG % (t, amplitude))
 
         # repeat again in 1 millisecond
         self.after(1, self.manage_queue)
@@ -258,5 +250,6 @@ if __name__ == "__main__":
     communicator = Communicator()
     listener = TapDetector()
     root = tk.Tk()
+    root.title("Switch Controller")
     UserInterfaceFrame(root, communicator, listener).pack(fill="both", expand=True)
     root.mainloop()
