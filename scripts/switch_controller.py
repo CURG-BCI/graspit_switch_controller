@@ -11,7 +11,7 @@ import time
 import sys
 import socket
 
-import tkinter as tk
+import Tkinter as tk
 
 #http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
 
@@ -37,7 +37,7 @@ class Msg:
     WAITING_FOR_MSG = "4\n"
 
 class TapDetector(object):
-    TAP_THRESHOLD = 0.6
+    TAP_THRESHOLD = 0.55
     FORMAT = pyaudio.paInt16 
     SHORT_NORMALIZE = (1.0/32768.0)
     RATE = 8000  
@@ -71,8 +71,8 @@ class TapDetector(object):
 
         amplitude = self.get_rms( block )
 
-        result = Tap.PRESS if amplitude > self.TAP_THRESHOLD else \
-                 Tap.RELEASE if amplitude < -self.TAP_THRESHOLD else \
+        result = Tap.RELEASE if amplitude > self.TAP_THRESHOLD else \
+                 Tap.PRESS if amplitude < -self.TAP_THRESHOLD else \
                  Tap.NOTHING
 
         if result is Tap.NOTHING:
@@ -93,13 +93,19 @@ class TapDetector(object):
 
         # iterate over the block.
         sum_squares = 0.0
+        num_pos = 0
         for sample in shorts:
             # sample is a signed short in +/- 32768. 
             # normalize it to 1.0
             n = sample * self.SHORT_NORMALIZE
-            sum_squares += n
+            if n > 0:
+                num_pos += 1
+            sum_squares += n * n
 
-        return sum_squares / count
+        sign = -1
+        if num_pos > count/2:
+            sign = 1 
+        return sign * math.sqrt( sum_squares / count )
         # return sum_squares/count
 
 class Communicator(object):
@@ -250,7 +256,7 @@ class UserInterfaceFrame(tk.Frame):
 
 if __name__ == "__main__":
     communicator = Communicator()
-    # listener = TapDetector()
+    listener = TapDetector()
     root = tk.Tk()
-    UserInterfaceFrame(root, communicator, None).pack(fill="both", expand=True)
+    UserInterfaceFrame(root, communicator, listener).pack(fill="both", expand=True)
     root.mainloop()
