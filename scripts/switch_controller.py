@@ -37,7 +37,7 @@ class Msg:
     WAITING_FOR_MSG = "4\n"
 
 class TapDetector(object):
-    TAP_THRESHOLD = 0.7
+    TAP_THRESHOLD = 0.5
     FORMAT = pyaudio.paInt16 
     SHORT_NORMALIZE = (1.0/32768.0)
     RATE = 16000  
@@ -49,6 +49,7 @@ class TapDetector(object):
     def __init__(self):
         self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
+        self.cooledDown = True
 
     def stop(self):
         self.stream.close()
@@ -74,7 +75,16 @@ class TapDetector(object):
                  Tap.PRESS if amplitude < -self.TAP_THRESHOLD else \
                  Tap.NOTHING
 
-        return result, amplitude
+        if result is Tap.NOTHING:
+            self.hasCooledDown = True
+            return result, amplitude
+        elif self.hasCooledDown:
+            self.hasCooledDown = False
+            return result, amplitude
+        else:
+            return Tap.COOLINGDOWN, amplitude
+
+        # return result, amplitude
 
     def get_rms( self, block ):
         # we will get one short out for each 
@@ -174,6 +184,7 @@ class UserInterfaceFrame(tk.Frame):
     WAITING_FOR_INPUT_MSG = (bcolors.HEADER + "Waiting for input (%fs passed, %f amplitude)" + bcolors.ENDC)
     REGISTERING_SELECT_MSG = (bcolors.WARNING + "Registering select (%fs passed, %f amplitude)" + bcolors.ENDC)
     REGISTERING_NEXT_MSG = (bcolors.OKBLUE + "Registering next (%fs passed, %f amplitude)" + bcolors.ENDC)
+    COOLINGDOWN_MSG = (bcolors.OKBLUE + "Cooling down (%fs passed, %f amplitude)" + bcolors.ENDC)
     SUBMITTING_SELECT_MSG = bcolors.OKGREEN + "\nSubmitting select" + bcolors.ENDC
     SUBMITTING_NEXT_MSG = bcolors.OKGREEN + "\nSubmitting next" + bcolors.ENDC
     INITIAL_TAP_MSG = bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC
@@ -233,7 +244,10 @@ class UserInterfaceFrame(tk.Frame):
         self.communicator.handleInput(result)
         state, t = self.communicator.readState()
 
-        if state is Msg.NEXT_MSG:
+        if result is Tap.COOLINGDOWN:
+            self.current_status_label.config(text="Cooling down")
+            self.print_output(self.COOLINGDOWN_MSG % (t, amplitude))
+        elif state is Msg.NEXT_MSG:
             self.current_status_label.config(text="Going to send NEXT")
             self.print_output(self.REGISTERING_NEXT_MSG % (t, amplitude))
         elif state is Msg.SELECT_MSG:
