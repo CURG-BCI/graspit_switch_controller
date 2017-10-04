@@ -5,6 +5,8 @@
 from __future__ import print_function
 
 import pyaudio
+# import wave
+import pygame
 import struct
 import math
 import time
@@ -110,14 +112,58 @@ class TapDetector(object):
         return sign * math.sqrt( sum_squares / count )
         # return sum_squares/count
 
+class AudioOutput(object):
+    def __init__(self):
+        pygame.init()
+        self.waiting_file = 'waiting.wav'
+        self.next_file = 'next.wav'
+        self.select_file = 'select.wav'
+        self.reset_file = 'reset.wav'
+        self.sent_next_file = 'sent_next.wav'
+        self.sent_select_file = 'sent_select.wav'
+
+        self.previous_file = ''
+        self.has_played_reset = False
+
+    def play(self, filename):
+        if not pygame.mixer.music.get_busy() and self.previous_file is not filename:
+            pygame.mixer.music.load(filename)
+            pygame.mixer.music.play(0)
+            self.previous_file = filename
+
+    def playNext(self):
+        self.has_played_reset = False
+        self.play(self.next_file)
+
+    def playSelect(self):
+        self.has_played_reset = False
+        self.play(self.select_file)
+
+    def playReset(self):
+        self.has_played_reset = True
+        #self.play(self.reset_file)
+
+    def playWaiting(self):
+        pass # if not self.previous_file == self.reset_file and not self.has_played_reset:
+        #    self.playReset()
+        #else:
+        #    self.play(self.waiting_file)
+
+    def playSentNext(self):
+        pass # self.play(self.sent_next_file)
+
+    def playSentSelect(self):
+        pass # self.play(self.sent_select_file)
+
 class Communicator(object):
     WAIT_THRESHOLD = 0.1
-    NEXT_THRESHOLD = 1
-    SELECT_THRESHOLD = 3
+    NEXT_THRESHOLD = 3
+    SELECT_THRESHOLD = 7
 
-    def __init__(self):
+    def __init__(self, audio):
         self.last_tap = time.time() - 100
         self.current_time = time.time()
+        self.audio = audio
 
         self.init_client_socket()
 
@@ -165,14 +211,22 @@ class Communicator(object):
             msg = Msg.WAITING_FOR_MSG
         return msg, time_since_last_tap
 
+    def sent_success(self, msg):
+        if msg == Msg.NEXT_MSG:
+            self.audio.playSentNext()
+        elif msg == Msg.SELECT_MSG:
+            self.audio.playSentSelect()
+
     def submitMessage(self, msg):
         self.resetLastTap()
         try:
             self.client_socket.send(msg.encode())
+            self.sent_success(msg)
         except:
             connected = self.init_client_socket()
             if connected:
                 self.client_socket.send(msg)
+                self.sent_success(msg)
             else:
                 print("Failed to send msg: %s" % msg)
 
@@ -189,11 +243,12 @@ class UserInterfaceFrame(tk.Frame):
     SUBMITTING_NEXT_MSG = bcolors.OKGREEN + "\nSubmitting next" + bcolors.ENDC
     INITIAL_TAP_MSG = bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC
 
-    def __init__(self, parent, communicator, listener):
+    def __init__(self, parent, communicator, listener, audio):
         tk.Frame.__init__(self, parent)
 
         self.communicator = communicator
         self.listener = listener
+        self.audio = audio
         self.size_str = 0
 
         buttonFrame = tk.Frame(self)
@@ -248,12 +303,15 @@ class UserInterfaceFrame(tk.Frame):
             self.current_status_label.config(text="Cooling down")
             self.print_output(self.COOLINGDOWN_MSG % (t, amplitude))
         elif state is Msg.NEXT_MSG:
+            self.audio.playNext()
             self.current_status_label.config(text="Going to send NEXT")
             self.print_output(self.REGISTERING_NEXT_MSG % (t, amplitude))
         elif state is Msg.SELECT_MSG:
+            self.audio.playSelect()
             self.current_status_label.config(text="Going to send SELECT")
             self.print_output(self.REGISTERING_SELECT_MSG % (t, amplitude))
         else:
+            self.audio.playWaiting()
             self.current_status_label.config(text="Waiting for user input")
             self.print_output(self.WAITING_FOR_INPUT_MSG % (t, amplitude))
 
@@ -261,9 +319,10 @@ class UserInterfaceFrame(tk.Frame):
         self.after(1, self.manage_queue)
 
 if __name__ == "__main__":
-    communicator = Communicator()
+    audio = AudioOutput()
+    communicator = Communicator(audio)
     listener = TapDetector()
     root = tk.Tk()
     root.title("Switch Controller")
-    UserInterfaceFrame(root, communicator, listener).pack(fill="both", expand=True)
+    UserInterfaceFrame(root, communicator, listener, audio).pack(fill="both", expand=True)
     root.mainloop()
