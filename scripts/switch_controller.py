@@ -1,11 +1,8 @@
 #!/usr/bin/python
 
-# open a microphone in pyAudio and listen for taps
-#Obtained most source from http://stackoverflow.com/questions/4160175/detect-tap-with-pyaudio-from-live-mic
 from __future__ import print_function
 
 import pyaudio
-# import wave
 import pygame
 import struct
 import math
@@ -13,9 +10,14 @@ import time
 import sys
 import socket
 
-import Tkinter as tk
+import Tkinter as Tk
 
-#http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
+"""
+Obtained most source from http://stackoverflow.com/questions/4160175/detect-tap-with-pyaudio-from-live-mic
+or http://stackoverflow.com/questions/287871/print-in-terminal-with-colors-using-python
+open a microphone in pyAudio and listen for taps
+"""
+
 
 class bcolors:
     HEADER = '\033[95m'
@@ -27,16 +29,25 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
+
 class Tap:
     PRESS = 1
     RELEASE = 2
     COOLINGDOWN = 3
     NOTHING = 4
 
+    def __init__(self):
+        pass
+
+
 class Msg:
     NEXT_MSG = "2\n"
     SELECT_MSG = "3\n"
     WAITING_FOR_MSG = "4\n"
+
+    def __init__(self):
+        pass
+
 
 class TapDetector(object):
     TAP_THRESHOLD = 0.5
@@ -51,37 +62,40 @@ class TapDetector(object):
     def __init__(self):
         self.pa = pyaudio.PyAudio()
         self.stream = self.open_mic_stream()
-        self.cooledDown = True
+        self.has_cooled_down = True
 
     def stop(self):
         self.stream.close()
 
     def open_mic_stream( self ):
-        stream = self.pa.open(   format = self.FORMAT,
-                                 channels = self.CHANNELS,
-                                 rate = self.RATE,
-                                 input = True,
-                                 frames_per_buffer = self.INPUT_FRAMES_PER_BLOCK)
+        stream = self.pa.open(format=self.FORMAT,
+                              channels=self.CHANNELS,
+                              rate=self.RATE,
+                              input=True,
+                              frames_per_buffer=self.INPUT_FRAMES_PER_BLOCK)
 
         return stream
 
     def listen(self):
         try:
             block = self.stream.read(self.INPUT_FRAMES_PER_BLOCK)
-        except(IOError, e):
+        except KeyboardInterrupt:
+            exit(0)
+        except IOError:
             return Tap.NOTHING
 
         amplitude = self.get_rms( block )
 
-        result = Tap.RELEASE if amplitude > self.TAP_THRESHOLD else \
-                 Tap.PRESS if amplitude < -self.TAP_THRESHOLD else \
-                 Tap.NOTHING
+        result = Tap.RELEASE if amplitude > self.TAP_THRESHOLD \
+            else Tap.PRESS if amplitude < -self.TAP_THRESHOLD \
+            else Tap.NOTHING
 
         if result is Tap.NOTHING:
-            self.hasCooledDown = True
+            self.has_cooled_down = True
             return result, amplitude
-        elif self.hasCooledDown:
-            self.hasCooledDown = False
+
+        elif self.has_cooled_down:
+            self.has_cooled_down = False
             return result, amplitude
         else:
             return Tap.COOLINGDOWN, amplitude
@@ -92,8 +106,8 @@ class TapDetector(object):
         # we will get one short out for each 
         # two chars in the string.
         count = len(block)/2
-        format = "%dh"%(count)
-        shorts = struct.unpack( format, block )
+        rms_format = "%dh" % count
+        shorts = struct.unpack(rms_format, block)
 
         # iterate over the block.
         sum_squares = 0.0
@@ -111,6 +125,7 @@ class TapDetector(object):
             sign = 1 
         return sign * math.sqrt( sum_squares / count )
         # return sum_squares/count
+
 
 class AudioOutput(object):
     def __init__(self):
@@ -131,7 +146,7 @@ class AudioOutput(object):
             pygame.mixer.music.play(0)
             self.previous_file = filename
 
-    def playNext(self):
+    def play_next(self):
         self.has_played_reset = False
         self.play(self.next_file)
 
@@ -141,19 +156,15 @@ class AudioOutput(object):
 
     def playReset(self):
         self.has_played_reset = True
-        #self.play(self.reset_file)
 
     def playWaiting(self):
-        pass # if not self.previous_file == self.reset_file and not self.has_played_reset:
-        #    self.playReset()
-        #else:
-        #    self.play(self.waiting_file)
+        pass
 
     def playSentNext(self):
-        pass # self.play(self.sent_next_file)
+        pass
 
     def playSentSelect(self):
-        pass # self.play(self.sent_select_file)
+        pass
 
 class Communicator(object):
     WAIT_THRESHOLD = 0.1
@@ -165,6 +176,7 @@ class Communicator(object):
         self.current_time = time.time()
         self.audio = audio
 
+        self.client_socket = None
         self.init_client_socket()
 
     def init_client_socket(self, ip='localhost', port=4775):
@@ -200,14 +212,12 @@ class Communicator(object):
     def readState(self):
         self.updateTime()
         time_since_last_tap = self.current_time - self.last_tap
-        # print(time_since_last_tap)
-        # if 0 <= time_since_last_tap <= self.WAIT_THRESHOLD:
-        #     msg = Msg.WAITING_FOR_MSG
+
         if 0 <= time_since_last_tap <= self.NEXT_THRESHOLD:
             msg = Msg.NEXT_MSG
         elif self.NEXT_THRESHOLD < time_since_last_tap <= self.SELECT_THRESHOLD:
             msg = Msg.SELECT_MSG
-        else: #Took too long on tap
+        else: # Took too long on tap
             msg = Msg.WAITING_FOR_MSG
         return msg, time_since_last_tap
 
@@ -233,7 +243,7 @@ class Communicator(object):
     def resetLastTap(self):
         self.last_tap = time.time() - self.SELECT_THRESHOLD
 
-class UserInterfaceFrame(tk.Frame):
+class UserInterfaceFrame(Tk.Frame):
     BUFFER_MSG = "Buffering input (%fs passed)"
     WAITING_FOR_INPUT_MSG = (bcolors.HEADER + "Waiting for input (%fs passed, %f amplitude)" + bcolors.ENDC)
     REGISTERING_SELECT_MSG = (bcolors.WARNING + "Registering select (%fs passed, %f amplitude)" + bcolors.ENDC)
@@ -244,24 +254,24 @@ class UserInterfaceFrame(tk.Frame):
     INITIAL_TAP_MSG = bcolors.OKGREEN + "\nInitial tap" + bcolors.ENDC
 
     def __init__(self, parent, communicator, listener, audio):
-        tk.Frame.__init__(self, parent)
+        Tk.Frame.__init__(self, parent)
 
         self.communicator = communicator
         self.listener = listener
         self.audio = audio
         self.size_str = 0
 
-        buttonFrame = tk.Frame(self)
+        buttonFrame = Tk.Frame(self)
 
-        pressButton = tk.Button(buttonFrame, text="Press Switch", command=self.pressSwitch, font=36)
-        releaseButton = tk.Button(buttonFrame, text="Release Switch", command=self.releaseSwitch, font=36)
+        pressButton = Tk.Button(buttonFrame, text="Press Switch", command=self.pressSwitch, font=36)
+        releaseButton = Tk.Button(buttonFrame, text="Release Switch", command=self.releaseSwitch, font=36)
 
         pressButton.pack(side="top", fill="x")
         releaseButton.pack(side="top", fill="x")
 
         buttonFrame.pack(side="left", fill="y")
 
-        self.current_status_label = tk.Label(self, text='Waiting for User Input', font=36)
+        self.current_status_label = Tk.Label(self, text='Waiting for User Input', font=36)
         self.current_status_label.pack(side="left", fill="both")
 
         self.info()
@@ -303,7 +313,7 @@ class UserInterfaceFrame(tk.Frame):
             self.current_status_label.config(text="Cooling down")
             self.print_output(self.COOLINGDOWN_MSG % (t, amplitude))
         elif state is Msg.NEXT_MSG:
-            self.audio.playNext()
+            self.audio.play_next()
             self.current_status_label.config(text="Going to send NEXT")
             self.print_output(self.REGISTERING_NEXT_MSG % (t, amplitude))
         elif state is Msg.SELECT_MSG:
@@ -322,7 +332,7 @@ if __name__ == "__main__":
     audio = AudioOutput()
     communicator = Communicator(audio)
     listener = TapDetector()
-    root = tk.Tk()
+    root = Tk.Tk()
     root.title("Switch Controller")
     UserInterfaceFrame(root, communicator, listener, audio).pack(fill="both", expand=True)
     root.mainloop()
