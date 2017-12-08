@@ -9,6 +9,7 @@ import math
 import time
 import sys
 import socket
+import os
 
 import Tkinter as Tk
 
@@ -130,12 +131,12 @@ class TapDetector(object):
 class AudioOutput(object):
     def __init__(self):
         pygame.init()
-        self.waiting_file = 'waiting.wav'
-        self.next_file = 'next.wav'
-        self.select_file = 'select.wav'
-        self.reset_file = 'reset.wav'
-        self.sent_next_file = 'sent_next.wav'
-        self.sent_select_file = 'sent_select.wav'
+        self.waiting_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'waiting.wav')
+        self.next_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'next.wav')
+        self.select_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'select.wav')
+        self.reset_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'reset.wav')
+        self.sent_next_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'sent_next.wav')
+        self.sent_select_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'sent_select.wav')
 
         self.previous_file = ''
         self.has_played_reset = False
@@ -156,15 +157,16 @@ class AudioOutput(object):
 
     def playReset(self):
         self.has_played_reset = True
+        self.previous_file = ""
 
     def playWaiting(self):
-        pass
+        self.previous_file = ""
 
     def playSentNext(self):
-        pass
+        self.previous_file = ""
 
     def playSentSelect(self):
-        pass
+        self.previous_file = ""
 
 class Communicator(object):
     WAIT_THRESHOLD = 0.1
